@@ -138,11 +138,18 @@ def toggle_record():
 
 
 def start_single_playback():
-    _trigger_playback(loop=False)
+    _trigger_playback(total_loops=1)
 
 
 def start_infinite_playback():
-    _trigger_playback(loop=True)
+    _trigger_playback(total_loops=-1)
+
+
+def start_custom_playback():
+    if app_instance:
+        app_instance.run_repeat_count()
+    else:
+        _trigger_playback(total_loops=3)
 
 
 def stop_playback_or_exit():
@@ -170,7 +177,7 @@ def shutdown_application():
     os._exit(0)
 
 
-def _trigger_playback(loop=False):
+def _trigger_playback(total_loops=1):
     global is_playing
     if is_recording:
         popup_queue.put("Cannot play while recording!")
@@ -183,10 +190,10 @@ def _trigger_playback(loop=False):
             app_instance.root.after(0, lambda: app_instance.status_lbl.config(text="Status: Ready", fg="#50FA7B"))
         return
 
-    threading.Thread(target=_play_engine, args=(loop,), daemon=True).start()
+    threading.Thread(target=_play_engine, args=(total_loops,), daemon=True).start()
 
 
-def _play_engine(loop=False):
+def _play_engine(total_loops=1):
     global is_playing
     target_name = app_instance.selected_macro.get() if app_instance else "default"
     filepath = get_macro_path(target_name)
@@ -198,7 +205,7 @@ def _play_engine(loop=False):
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             playback_data = json.load(f)
-    except Exception as e:
+    except Exception:
         popup_queue.put("Failed to read JSON!")
         return
 
@@ -207,12 +214,15 @@ def _play_engine(loop=False):
         return
 
     is_playing = True
-    mode = "Looping" if loop else "Single Play"
+    mode = "Infinite Loop" if total_loops == -1 else (f"{total_loops} Repeats" if total_loops > 1 else "Single Play")
     popup_queue.put(f"▶ PLAYING [{target_name}]: {mode}")
     if app_instance:
         app_instance.root.after(0, lambda: app_instance.status_lbl.config(text=f"Status: Playing ({mode})...", fg="#BD93F9"))
 
+    current_iteration = 0
+
     while is_playing:
+        current_iteration += 1
         play_start = time.time()
 
         for event in playback_data:
@@ -246,8 +256,9 @@ def _play_engine(loop=False):
                 if k:
                     kb_ctrl.release(k)
 
-        if not loop:
+        if total_loops != -1 and current_iteration >= total_loops:
             break
+
         time.sleep(0.05)
 
     is_playing = False
@@ -258,7 +269,6 @@ def _play_engine(loop=False):
 
 # --- Keystroke Filter ---
 def on_key_press_raw(key):
-    # Ignore hotkey triggers so they aren't logged into the recorded sequence
     if key in (keyboard.Key.f10, keyboard.Key.f9):
         return
 
@@ -287,14 +297,14 @@ class MacroApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Macro Manager")
-        self.root.geometry("380x370")
+        self.root.geometry("380x420")
         self.root.configure(bg="#21222C")
         self.root.attributes("-topmost", True)
         self.root.resizable(False, False)
 
         self.root.protocol("WM_DELETE_WINDOW", shutdown_application)
 
-        # Dropdown styling with pure black font
+        # Dropdown styling with dark font
         style = ttk.Style()
         style.theme_use("clam")
         style.configure(
@@ -339,16 +349,38 @@ class MacroApp:
 
         # --- Action Buttons ---
         act_frame = tk.Frame(self.root, bg="#21222C")
-        act_frame.pack(fill="x", padx=20, pady=10)
+        act_frame.pack(fill="x", padx=20, pady=8)
 
-        tk.Button(act_frame, text="Record / Stop  [F10]", command=toggle_record, bg="#FF5555", fg="#FFFFFF", font=("Segoe UI", 10, "bold"), relief="flat", pady=6).pack(fill="x", pady=3)
-        tk.Button(act_frame, text="Play Once  [Ctrl + F9]", command=start_single_playback, bg="#50FA7B", fg="#282A36", font=("Segoe UI", 10, "bold"), relief="flat", pady=6).pack(fill="x", pady=3)
-        tk.Button(act_frame, text="Infinite Loop  [Shift + F9]", command=start_infinite_playback, bg="#BD93F9", fg="#282A36", font=("Segoe UI", 10, "bold"), relief="flat", pady=6).pack(fill="x", pady=3)
-        tk.Button(act_frame, text="Stop / Exit  [Esc]", command=stop_playback_or_exit, bg="#6272A4", fg="#FFFFFF", font=("Segoe UI", 9), relief="flat", pady=4).pack(fill="x", pady=3)
+        tk.Button(act_frame, text="Record / Stop  [F10]", command=toggle_record, bg="#FF5555", fg="#FFFFFF", font=("Segoe UI", 10, "bold"), relief="flat", pady=5).pack(fill="x", pady=2)
+        tk.Button(act_frame, text="Play Once  [Ctrl + F9]", command=start_single_playback, bg="#50FA7B", fg="#282A36", font=("Segoe UI", 10, "bold"), relief="flat", pady=5).pack(fill="x", pady=2)
+
+        # --- Repeat N Count Row ---
+        repeat_row = tk.Frame(act_frame, bg="#21222C")
+        repeat_row.pack(fill="x", pady=2)
+
+        tk.Button(repeat_row, text="Repeat N  [Alt + F9]", command=self.run_repeat_count, bg="#FFB86C", fg="#282A36", font=("Segoe UI", 10, "bold"), relief="flat", pady=5).pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        self.repeat_spinbox = tk.Spinbox(
+            repeat_row,
+            from_=1,
+            to=999999,
+            width=6,
+            font=("Segoe UI", 11, "bold"),
+            justify="center",
+            bg="#E2E8F0",
+            fg="#000000",
+            relief="flat"
+        )
+        self.repeat_spinbox.delete(0, "end")
+        self.repeat_spinbox.insert(0, "3")
+        self.repeat_spinbox.pack(side="right", ipady=3)
+
+        tk.Button(act_frame, text="Infinite Loop  [Shift + F9]", command=start_infinite_playback, bg="#BD93F9", fg="#282A36", font=("Segoe UI", 10, "bold"), relief="flat", pady=5).pack(fill="x", pady=2)
+        tk.Button(act_frame, text="Stop / Exit  [Esc]", command=stop_playback_or_exit, bg="#6272A4", fg="#FFFFFF", font=("Segoe UI", 9), relief="flat", pady=3).pack(fill="x", pady=2)
 
         # Status Label
         self.status_lbl = tk.Label(self.root, text="Status: Ready", font=("Segoe UI", 10), fg="#50FA7B", bg="#21222C")
-        self.status_lbl.pack(pady=(5, 10))
+        self.status_lbl.pack(pady=(4, 8))
 
         # Floating Toast Banner Setup
         self.toast = tk.Toplevel(self.root)
@@ -376,6 +408,15 @@ class MacroApp:
 
         self.refresh_file_list()
         self.check_queue()
+
+    def run_repeat_count(self):
+        try:
+            count = int(self.repeat_spinbox.get())
+            if count <= 0:
+                count = 1
+        except ValueError:
+            count = 1
+        _trigger_playback(total_loops=count)
 
     def refresh_file_list(self):
         files = [f.replace(".json", "") for f in os.listdir(MACRO_DIR) if f.endswith(".json")]
@@ -430,8 +471,9 @@ class MacroApp:
 # ==============================================================================
 KEYBIND_MAPPINGS = {
     "<f10>": toggle_record,
-    "<ctrl>+<f9>": start_single_playback,      # Play Once: Ctrl + F9
-    "<shift>+<f9>": start_infinite_playback,   # Infinite Loop: Shift + F9
+    "<ctrl>+<f9>": start_single_playback,       # Play Once: Ctrl + F9
+    "<alt>+<f9>": start_custom_playback,        # Repeat N times: Alt + F9
+    "<shift>+<f9>": start_infinite_playback,    # Infinite Loop: Shift + F9
     "<esc>": stop_playback_or_exit
 }
 
