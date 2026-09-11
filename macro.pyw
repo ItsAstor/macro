@@ -1,8 +1,26 @@
+import sys
+import subprocess
+
+# --- Auto-Dependency Installer ---
+REQUIRED_PACKAGES = {
+    "pynput": "pynput"
+}
+
+def ensure_dependencies():
+    for package, module_name in REQUIRED_PACKAGES.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            print(f"Installing missing dependency: {package}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", package])
+
+ensure_dependencies()
+
+# --- Standard & Installed Imports ---
 import ctypes
 import json
 import os
 import queue
-import sys
 import threading
 import time
 import tkinter as tk
